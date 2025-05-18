@@ -6,6 +6,7 @@ class Post:
     group_id: str
     post_id: int
     text: str
+    date: int
 
 
 @dataclass
@@ -14,5 +15,6 @@ class Comment:
     post_id: int
     text: str
     user_name: str
+    date: int
     city: str = None
     workplace: str = None

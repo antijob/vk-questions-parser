@@ -7,8 +7,9 @@ from models import Post, Comment  # Добавлен импорт классов
 class VKParser:
     API_URL = "https://api.vk.com/method/"
 
-    def __init__(self, token):
+    def __init__(self, token, max_posts=100):
         self.token = token
+        self.max_posts = max_posts
         self.logger = logging.getLogger(__name__)
 
     def _call_api(self, method, params):
@@ -31,19 +32,48 @@ class VKParser:
                 return None
 
     def get_posts(self, group_id):
-        response = self._call_api(
-            "wall.get", {"domain": group_id, "count": 100})
         posts = []
-        if response and "items" in response:
+        offset = 0
+        count_per_request = 100  # Максимальное количество постов за один запрос
+
+        while len(posts) < self.max_posts:
+            # Вычисляем сколько постов осталось запросить
+            remaining = self.max_posts - len(posts)
+            current_count = min(count_per_request, remaining)
+
+            response = self._call_api(
+                "wall.get",
+                {
+                    "domain": group_id,
+                    "count": current_count,
+                    "offset": offset,
+                    "filter": "owner"  # Получаем только посты владельца стены
+                }
+            )
+
+            if not response or "items" not in response or not response["items"]:
+                break  # Больше постов нет
+
             for item in response["items"]:
                 posts.append(Post(
                     group_id=group_id,
                     post_id=item["id"],
-                    text=item["text"]
+                    text=item["text"],
+                    date=item.get("date", 0)
                 ))
-        return posts
 
-    def get_comments(self, group_id, post_id):
+            # Если получено меньше постов, чем запрошено, значит это последняя страница
+            if len(response["items"]) < current_count:
+                break
+
+            offset += current_count
+
+            # Небольшая задержка, чтобы не превысить лимиты API
+            time.sleep(0.5)
+
+        return posts[:self.max_posts]  # На всякий случай обрезаем по лимиту
+
+    def get_comments(self, group_id, post_id, max_comments=100):
         numeric_group_id = self._get_numeric_group_id(group_id)
         if not numeric_group_id:
             return []
@@ -54,7 +84,8 @@ class VKParser:
             "post_id": post_id,
             "extended": 1,
             "fields": "city,occupation",  # Добавлено явное указание полей
-            "count": 100
+            # Ограничиваем количество комментариев
+            "count": min(100, max_comments)
         })
 
         comments = []
@@ -70,7 +101,8 @@ class VKParser:
                     city=user.get("city", {}).get(
                         "title", "") if user else "null",
                     workplace=user.get(
-                        "occupation", "null") if user else "null"  # Исправлено
+                        "occupation", "null") if user else "null",  # Исправлено
+                    date=item.get("date", 0)
                 ))
         return comments
 
