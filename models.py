@@ -1,10 +1,12 @@
 from dataclasses import dataclass
 
+
 @dataclass
 class Post:
     group_id: str
     post_id: int
     text: str
+
 
 @dataclass
 class Comment:
