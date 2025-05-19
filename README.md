@@ -40,7 +40,7 @@
 Создайте файл .env:
 
     VK_TOKEN=ваш_токен_vk_api
-    VK_GROUPS=group1,group2,group3
+    VK_GROUPS=group1,group2,group3 (screen_name из URL)
 
 Как получить VK API :
 (https://smmplanner.com/blog/gaid-po-api-vk-kak-podkliuchit-i-ispolzovat/#02)
@@ -48,14 +48,6 @@
 ---
 
 ## 🚀 Использование
-
-    Настройте список групп в main.py:
-
-    GROUPS = [
-        "pro_che",
-        "secrets_of_teachers",
-        # Добавьте свои группы (screen_name из URL)
-    ]
 
 Запустите парсер:
 
