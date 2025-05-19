@@ -28,6 +28,7 @@
   - `python-dotenv`
   - `tqdm`
   - `transformers` - для определения вопросов
+  - `torch` - для работы с AI
 
 ---
 
