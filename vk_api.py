@@ -1,6 +1,7 @@
 import requests
 import time
 import logging
+import datetime
 from models import Post, Comment  # Добавлен импорт классов Post и Comment
 
 
@@ -88,22 +89,45 @@ class VKParser:
             "count": min(100, max_comments)
         })
 
+        profiles = {p["id"]: p for p in response.get("profiles", [])} if response else {}
+        items = response["items"] if response and "items" in response else []
+        if not items:
+            return []
         comments = []
-        if response and "items" in response:
-            profiles = {p["id"]: p for p in response.get("profiles", [])}
-            for item in response["items"]:
-                user = profiles.get(item.get("from_id"))
-                comments.append(Comment(
-                    group_id=group_id,
-                    post_id=post_id,
-                    text=item.get("text", ""),
-                    user_name=f"{user.get('first_name', '')} {user.get('last_name', '')}" if user else "Неизвестно",
-                    city=user.get("city", {}).get(
-                        "title", "") if user else "null",
-                    workplace=user.get(
-                        "occupation", "null") if user else "null",  # Исправлено
-                    date=item.get("date", 0)
-                ))
+        for item in items:
+            user = profiles.get(item.get("from_id"))
+            # workplace: только name
+            workplace = None
+            if user and isinstance(user.get("occupation"), dict):
+                workplace = user["occupation"].get("name", None)
+            # country: только если есть country.title
+            country = user.get("country", {}).get("title", None) if user else None
+            # bdate: только если есть год, и привести к формату дд-мм-гггг
+            bdate = user.get("bdate") if user else None
+            if bdate and len(bdate.split('.')) == 3:
+                try:
+                    day, month, year = bdate.split('.')
+                    bdate = f"{int(day):02d}-{int(month):02d}-{year}"
+                except Exception:
+                    bdate = None
+            else:
+                bdate = None
+            sex = self._convert_sex(user.get("sex")) if user else None
+            region = user.get("city", {}).get("title") if user and user.get("city") else None
+            comments.append(Comment(
+                group_id=group_id,
+                post_id=post_id,
+                text=item.get("text", ""),
+                user_name=f"{user.get('first_name', '')} {user.get('last_name', '')}" if user else "Неизвестно",
+                city=user.get("city", {}).get("title", "") if user else "",
+                workplace=workplace,
+                date=self._format_date(item.get("date", 0)),
+                sex=sex,
+                bdate=bdate,
+                country=country,
+                region=region,
+                likes=item.get("likes", {}).get("count", 0)
+            ))
         return comments
 
     def _get_numeric_group_id(self, group_id):
@@ -111,4 +135,23 @@ class VKParser:
         response = self._call_api("groups.getById", {"group_id": group_id})
         if response and response[0].get("id"):
             return response[0]["id"]
+        return None
+
+    def _format_date(self, timestamp: int) -> str:
+        """Преобразует timestamp в строку формата дд-мм-гггг (день-месяц-год)"""
+        if not timestamp:
+            return ""
+        try:
+            dt = datetime.datetime.utcfromtimestamp(timestamp)
+            return dt.strftime("%d-%m-%Y")
+        except Exception as e:
+            self.logger.error(f"Ошибка преобразования даты: {e}")
+            return ""
+
+    def _convert_sex(self, sex_code: int) -> str:
+        """Конвертирует код пола VK в символы 'M', 'F' или None"""
+        if sex_code == 2:
+            return 'M'
+        elif sex_code == 1:
+            return 'F'
         return None
