@@ -8,9 +8,10 @@ from models import Post, Comment  # Добавлен импорт классов
 class VKParser:
     API_URL = "https://api.vk.com/method/"
 
-    def __init__(self, token, max_posts=100):
+    def __init__(self, token, max_posts=100, until_date=None):
         self.token = token
         self.max_posts = max_posts
+        self.until_date = until_date
         self.logger = logging.getLogger(__name__)
 
     def _call_api(self, method, params):
@@ -36,8 +37,9 @@ class VKParser:
         posts = []
         offset = 0
         count_per_request = 100  # Максимальное количество постов за один запрос
+        reached_date_limit = False
 
-        while len(posts) < self.max_posts:
+        while len(posts) < self.max_posts and not reached_date_limit:
             # Вычисляем сколько постов осталось запросить
             remaining = self.max_posts - len(posts)
             current_count = min(count_per_request, remaining)
@@ -56,15 +58,25 @@ class VKParser:
                 break  # Больше постов нет
 
             for item in response["items"]:
+                post_date = item.get("date", 0)
+
+                # Проверяем, не достигли ли мы даты ограничения
+                if self.until_date and post_date:
+                    post_datetime = datetime.datetime.utcfromtimestamp(
+                        post_date)
+                    if post_datetime < self.until_date:
+                        reached_date_limit = True
+                        break
+
                 posts.append(Post(
                     group_id=group_id,
                     post_id=item["id"],
                     text=item["text"],
-                    date=item.get("date", 0)
+                    date=post_date
                 ))
 
-            # Если получено меньше постов, чем запрошено, значит это последняя страница
-            if len(response["items"]) < current_count:
+            # Если достигнут лимит по дате или получено меньше постов, чем запрошено, выходим из цикла
+            if reached_date_limit or len(response["items"]) < current_count:
                 break
 
             offset += current_count
@@ -89,11 +101,13 @@ class VKParser:
             "count": min(100, max_comments)
         })
 
-        profiles = {p["id"]: p for p in response.get("profiles", [])} if response else {}
+        profiles = {p["id"]: p for p in response.get(
+            "profiles", [])} if response else {}
         items = response["items"] if response and "items" in response else []
         if not items:
             return []
         comments = []
+
         for item in items:
             user = profiles.get(item.get("from_id"))
             # workplace: только name
@@ -101,7 +115,8 @@ class VKParser:
             if user and isinstance(user.get("occupation"), dict):
                 workplace = user["occupation"].get("name", None)
             # country: только если есть country.title
-            country = user.get("country", {}).get("title", None) if user else None
+            country = user.get("country", {}).get(
+                "title", None) if user else None
             # bdate: только если есть год, и привести к формату дд-мм-гггг
             bdate = user.get("bdate") if user else None
             if bdate and len(bdate.split('.')) == 3:
@@ -113,7 +128,8 @@ class VKParser:
             else:
                 bdate = None
             sex = self._convert_sex(user.get("sex")) if user else None
-            region = user.get("city", {}).get("title") if user and user.get("city") else None
+            region = user.get("city", {}).get(
+                "title") if user and user.get("city") else None
             comments.append(Comment(
                 group_id=group_id,
                 post_id=post_id,
