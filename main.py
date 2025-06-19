@@ -17,14 +17,14 @@ def parse_arguments():
         description='Парсер постов и комментариев из групп VK')
 
     group = parser.add_mutually_exclusive_group()
-    
+
     group.add_argument(
         '--deep',
         type=int,
         default=100,
         help='Глубина сбора постов и комментариев (по умолчанию: 100)'
     )
-    
+
     group.add_argument(
         '--date',
         type=str,
@@ -56,10 +56,12 @@ def main():
             until_date = datetime.datetime(int(year), int(month), int(day))
         except ValueError:
             raise ValueError("Неверный формат даты. Используйте ДД-ММ-ГГГГ")
-    
+
     # Инициализируем парсер с указанной глубиной или датой
-    max_posts = args.deep if not until_date else 1000  # Если указана дата, увеличиваем лимит
-    vk_parser = VKParser(os.getenv("VK_TOKEN"), max_posts=max_posts, until_date=until_date)
+    # Если указана дата, увеличиваем лимит
+    max_posts = args.deep if not until_date else 1000
+    vk_parser = VKParser(os.getenv("VK_TOKEN"),
+                         max_posts=max_posts, until_date=until_date)
 
     # Сбор постов
     posts = []
@@ -83,7 +85,8 @@ def main():
 
     # Сбор комментариев
     comments = []
-    max_comments = args.deep if not until_date else 1000  # Если указана дата, увеличиваем лимит
+    # Если указана дата, увеличиваем лимит
+    max_comments = args.deep if not until_date else 1000
     for post in tqdm(posts_to_process, desc="Парсинг комментариев"):
         comments.extend(vk_parser.get_comments(
             post.group_id, post.post_id, max_comments=max_comments))
