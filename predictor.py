@@ -1,5 +1,4 @@
-from functools import lru_cache
-from typing import Optional, Dict, Any, Union
+from typing import Optional
 from transformers import pipeline, Pipeline
 import logging
 

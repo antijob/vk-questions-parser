@@ -1,8 +1,9 @@
+from typing import Optional
 import requests
 import time
-import logging
 import datetime
-from models import Post, Comment  # Добавлен импорт классов Post и Comment
+import logging
+from models import Post, Comment
 
 
 class VKParser:
@@ -33,7 +34,24 @@ class VKParser:
                 self.logger.error(f"Ошибка запроса: {e}")
                 return None
 
-    def get_posts(self, group_id):
+    def _format_date(self, timestamp: int) -> str:
+        if not timestamp:
+            return ""
+        try:
+            dt = datetime.datetime.utcfromtimestamp(timestamp)
+            return dt.strftime("%d-%m-%Y")
+        except Exception as e:
+            self.logger.error(f"Ошибка преобразования даты: {e}")
+            return ""
+
+    def _convert_sex(self, sex_code: int) -> Optional[str]:
+        if sex_code == 2:
+            return 'M'
+        elif sex_code == 1:
+            return 'F'
+        return None
+
+    def get_posts(self, group_id, since_date: str = None):
         posts = []
         offset = 0
         count_per_request = 100  # Максимальное количество постов за один запрос
@@ -43,20 +61,18 @@ class VKParser:
             # Вычисляем сколько постов осталось запросить
             remaining = self.max_posts - len(posts)
             current_count = min(count_per_request, remaining)
-
             response = self._call_api(
                 "wall.get",
                 {
                     "domain": group_id,
                     "count": current_count,
                     "offset": offset,
-                    "filter": "owner"  # Получаем только посты владельца стены
+                    "filter": "owner"
                 }
             )
-
             if not response or "items" not in response or not response["items"]:
-                break  # Больше постов нет
-
+                break
+            stop = False
             for item in response["items"]:
                 post_date = item.get("date", 0)
 
@@ -67,37 +83,33 @@ class VKParser:
                     if post_datetime < self.until_date:
                         reached_date_limit = True
                         break
+                post_date_str = self._format_date(item.get("date", 0))
 
                 posts.append(Post(
                     group_id=group_id,
                     post_id=item["id"],
-                    text=item["text"],
-                    date=post_date
+                    text=item["text"].encode(
+                        'utf-8', errors='replace').decode('utf-8'),
+                    date=post_date_str,
+                    likes=item.get("likes", {}).get("count", 0)
                 ))
 
             # Если достигнут лимит по дате или получено меньше постов, чем запрошено, выходим из цикла
             if reached_date_limit or len(response["items"]) < current_count:
                 break
-
             offset += current_count
-
-            # Небольшая задержка, чтобы не превысить лимиты API
             time.sleep(0.5)
-
-        return posts[:self.max_posts]  # На всякий случай обрезаем по лимиту
+        return posts[:self.max_posts]
 
     def get_comments(self, group_id, post_id, max_comments=100):
         numeric_group_id = self._get_numeric_group_id(group_id)
         if not numeric_group_id:
             return []
-
-        # Запрашиваем дополнительные поля: город и место работы (occupation)
         response = self._call_api("wall.getComments", {
             "owner_id": -numeric_group_id,
             "post_id": post_id,
             "extended": 1,
-            "fields": "city,occupation",  # Добавлено явное указание полей
-            # Ограничиваем количество комментариев
+            "fields": "occupation,sex,bdate",
             "count": min(100, max_comments)
         })
 
@@ -110,14 +122,8 @@ class VKParser:
 
         for item in items:
             user = profiles.get(item.get("from_id"))
-            # workplace: только name
-            workplace = None
-            if user and isinstance(user.get("occupation"), dict):
-                workplace = user["occupation"].get("name", None)
-            # country: только если есть country.title
-            country = user.get("country", {}).get(
-                "title", None) if user else None
-            # bdate: только если есть год, и привести к формату дд-мм-гггг
+            workplace = user["occupation"].get("name") if user and isinstance(
+                user.get("occupation"), dict) else None
             bdate = user.get("bdate") if user else None
             if bdate and len(bdate.split('.')) == 3:
                 try:
@@ -128,46 +134,37 @@ class VKParser:
             else:
                 bdate = None
             sex = self._convert_sex(user.get("sex")) if user else None
-            region = user.get("city", {}).get(
-                "title") if user and user.get("city") else None
+            comment_id = item.get("id")
+            likes = self.get_comment_likes(-numeric_group_id,
+                                           comment_id) if comment_id else 0
             comments.append(Comment(
                 group_id=group_id,
                 post_id=post_id,
-                text=item.get("text", ""),
+                comment_id=comment_id,
+                text=item.get("text", "").encode(
+                    'utf-8', errors='replace').decode('utf-8'),
                 user_name=f"{user.get('first_name', '')} {user.get('last_name', '')}" if user else "Неизвестно",
-                city=user.get("city", {}).get("title", "") if user else "",
                 workplace=workplace,
                 date=self._format_date(item.get("date", 0)),
                 sex=sex,
                 bdate=bdate,
-                country=country,
-                region=region,
-                likes=item.get("likes", {}).get("count", 0)
+                likes=likes
             ))
         return comments
 
     def _get_numeric_group_id(self, group_id):
-        """Получает числовой ID группы по screen_name."""
         response = self._call_api("groups.getById", {"group_id": group_id})
         if response and response[0].get("id"):
             return response[0]["id"]
         return None
 
-    def _format_date(self, timestamp: int) -> str:
-        """Преобразует timestamp в строку формата дд-мм-гггг (день-месяц-год)"""
-        if not timestamp:
-            return ""
-        try:
-            dt = datetime.datetime.utcfromtimestamp(timestamp)
-            return dt.strftime("%d-%m-%Y")
-        except Exception as e:
-            self.logger.error(f"Ошибка преобразования даты: {e}")
-            return ""
-
-    def _convert_sex(self, sex_code: int) -> str:
-        """Конвертирует код пола VK в символы 'M', 'F' или None"""
-        if sex_code == 2:
-            return 'M'
-        elif sex_code == 1:
-            return 'F'
-        return None
+    def get_comment_likes(self, owner_id, comment_id):
+        """Получить количество лайков для комментария через likes.getList"""
+        response = self._call_api("likes.getList", {
+            "type": "comment",
+            "owner_id": owner_id,
+            "item_id": comment_id
+        })
+        if response and "count" in response:
+            return response["count"]
+        return 0
