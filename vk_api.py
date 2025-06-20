@@ -9,7 +9,7 @@ from models import Post, Comment
 class VKParser:
     API_URL = "https://api.vk.com/method/"
 
-    def __init__(self, token, max_posts=100, until_date=None):
+    def __init__(self, token, max_posts=None, until_date=None):
         self.token = token
         self.max_posts = max_posts
         self.until_date = until_date
@@ -24,7 +24,7 @@ class VKParser:
                 data = response.json()
                 if "error" in data:
                     if data["error"]["error_code"] in [6, 10, 28]:
-                        time.sleep(1)
+                        time.sleep(0.1)
                         continue
                     else:
                         self.logger.error(f"Ошибка API: {data['error']}")
@@ -38,8 +38,11 @@ class VKParser:
         if not timestamp:
             return ""
         try:
-            dt = datetime.datetime.utcfromtimestamp(timestamp)
-            return dt.strftime("%d-%m-%Y")
+            dt = datetime.datetime.utcfromtimestamp(
+                # Конвертируем в московское время
+                timestamp) + datetime.timedelta(hours=3)
+            # Добавляем время для отладки
+            return dt.strftime("%d-%m-%Y %H:%M:%S")
         except Exception as e:
             self.logger.error(f"Ошибка преобразования даты: {e}")
             return ""
@@ -57,9 +60,13 @@ class VKParser:
         count_per_request = 100  # Максимальное количество постов за один запрос
         reached_date_limit = False
 
-        while len(posts) < self.max_posts and not reached_date_limit:
-            # Вычисляем сколько постов осталось запросить
-            remaining = self.max_posts - len(posts)
+        # Если until_date не задан, используем max_posts, иначе снимаем ограничение
+        max_posts = self.max_posts if not self.until_date else None
+
+        while (max_posts is None or len(posts) < max_posts) and not reached_date_limit:
+            # Вычисляем сколько постов осталось запросить, если есть ограничение
+            remaining = (max_posts - len(posts)
+                         ) if max_posts is not None else count_per_request
             current_count = min(count_per_request, remaining)
             response = self._call_api(
                 "wall.get",
@@ -72,7 +79,6 @@ class VKParser:
             )
             if not response or "items" not in response or not response["items"]:
                 break
-            stop = False
             for item in response["items"]:
                 post_date = item.get("date", 0)
 
@@ -98,8 +104,9 @@ class VKParser:
             if reached_date_limit or len(response["items"]) < current_count:
                 break
             offset += current_count
-            time.sleep(0.5)
-        return posts[:self.max_posts]
+            time.sleep(0.1)
+        # Если есть ограничение по количеству, обрезаем результат
+        return posts[:max_posts] if max_posts is not None else posts
 
     def get_comments(self, group_id, post_id, max_comments=100):
         numeric_group_id = self._get_numeric_group_id(group_id)
