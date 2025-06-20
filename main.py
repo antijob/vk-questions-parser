@@ -59,7 +59,7 @@ def main():
 
     # Инициализируем парсер с указанной глубиной или датой
     # Если указана дата, увеличиваем лимит
-    max_posts = args.deep if not until_date else 1000
+    max_posts = args.deep if not until_date else None
     vk_parser = VKParser(os.getenv("VK_TOKEN"),
                          max_posts=max_posts, until_date=until_date)
 
